@@ -65,6 +65,49 @@ class ChildRunsTest {
         assertEquals(ChildPhase.Unknown, store.get("c")?.phase)
     }
 
+    /**
+     * 子任务结论比落盘上限长:交给父 Run 的是整份原文,落盘的那份才截到 [ChildAgentRunner.MAX_RESULT_CHARS]。
+     * 这条必须走真 [ChildAgentRunner]——用假 host 原样返回长文本,跨层的截断顺序就测不出来。
+     */
+    @Test fun childAnswerLongerThanTheStoredCapReachesTheParentWhole() = runBlocking {
+        val store = MemoryChildRunStore()
+        val long = "长".repeat(6_000)
+        val runner = ChildAgentRunner({ s -> AgentLoop(FakeModel(answerReply(long)),
+            toolDispatcher(FakeScreen(), web = FakeWebPort(), runSpec = s), "BASE", confirmations = null) }, store)
+        val spec = RunSpec(RunId("c"), "research", "thread",
+            provenance = RunProvenance(RunOrigin.Child, Attendance.Unattended), parent = RunId("p"))
+        val result = runner.spawn(spec, null)
+        assertEquals(long.length, result.text.length)
+        assertEquals(ChildAgentRunner.MAX_RESULT_CHARS, store.get("c")?.result?.length)
+    }
+
+    /** 同上,一路走到 `spawn_agent`:`maxResultChars` 超过落盘上限也拿得到,`truncated` 和原长都是真的。 */
+    @Test fun askingForMoreThanTheStoredCapDeliversItAndReportsTheRealOriginalLength() = runBlocking {
+        val store = MemoryChildRunStore()
+        val long = "x".repeat(9_000)
+        val runner = ChildAgentRunner({ s -> AgentLoop(FakeModel(answerReply(long)),
+            toolDispatcher(FakeScreen(), web = FakeWebPort(), runSpec = s), "BASE", confirmations = null) }, store)
+        val tools = toolDispatcher(FakeScreen(), runSpec = RunSpec(RunId("parent"), "goal", "thread"), childHost = runner)
+        val content = tools.execute(Part.ToolCall("s", "spawn_agent", """{"goal":"读一页并整理","maxResultChars":8000}"""), ActionPass()).content
+        assertEquals(8_000, resultLength(content))
+        assertEquals("true", content["truncated"].toString())
+        assertEquals(long.length.toString(), content["fullLength"].toString())
+        // 账本里那份照旧有上限
+        assertEquals(ChildAgentRunner.MAX_RESULT_CHARS, store.all().single().result?.length)
+    }
+
+    /** 原文比父 Run 的上限短:整份交出去,不写 truncated,也不写原长。 */
+    @Test fun childAnswerUnderTheLimitComesBackWholeWithoutTheFlags() = runBlocking {
+        val store = MemoryChildRunStore()
+        val runner = ChildAgentRunner({ s -> AgentLoop(FakeModel(answerReply("短结论")),
+            toolDispatcher(FakeScreen(), web = FakeWebPort(), runSpec = s), "BASE", confirmations = null) }, store)
+        val tools = toolDispatcher(FakeScreen(), runSpec = RunSpec(RunId("parent"), "goal", "thread"), childHost = runner)
+        val content = tools.execute(Part.ToolCall("s", "spawn_agent", """{"goal":"查一条"}"""), ActionPass()).content
+        assertEquals("短结论".length, resultLength(content))
+        assertEquals(null, content["truncated"])
+        assertEquals(null, content["fullLength"])
+    }
+
     private fun spawnWith(args: String, text: String = "x".repeat(20_000)): Pair<RunSpec, kotlinx.serialization.json.JsonObject> = runBlocking {
         var seen: RunSpec? = null
         val host = ChildRunHost { spec, _ -> seen = spec; ChildResult(spec.id, ChildPhase.Completed, text) }

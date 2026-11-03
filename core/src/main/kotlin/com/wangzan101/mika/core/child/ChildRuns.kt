@@ -29,6 +29,7 @@ class MemoryChildRunStore : ChildRunStore {
     @Synchronized override fun all() = records.values.toList()
 }
 
+/** 子 Run 的结论。[text] 是子任务自己交出来的整份原文,不在这里按长度截:要不要截、截多少,由调用方按自己的上限决定(见 `spawn_agent` 的 `maxResultChars`)。 */
 data class ChildResult(val id: RunId, val phase: ChildPhase, val text: String)
 
 fun interface ChildRunHost { suspend fun spawn(spec: RunSpec, format: String?): ChildResult }
@@ -57,12 +58,16 @@ class ChildAgentRunner(
                 else -> "no result"
             }
             val phase = if (end == TaskState.Cancelled) ChildPhase.Interrupted else ChildPhase.Completed
-            val answer = raw.take(MAX_RESULT_CHARS)
-            val checked = if (format == "json" && runCatching { Json.parseToJsonElement(answer) }.isFailure)
-                "$answer\n(the child run's JSON did not pass validation; the original text is kept)" else answer
-            store.save(ChildRecord(spec.id.value, parent.value, phase, checked, clock()))
+            // 校验的是子任务自己交出来的那份,不是落盘时截过的那份:截过的 JSON 必然解析不了,
+            // 原来那句「没通过校验」其实只是被这里先砍了一刀。
+            val checked = if (format == "json" && runCatching { Json.parseToJsonElement(raw) }.isFailure)
+                "$raw\n(the child run's JSON did not pass validation; the original text is kept)" else raw
+            // 交给父 Run 的是原文,截多少由父 Run 按自己的上限决定(见 SpawnAgent 的 maxResultChars);
+            // 落盘的那份才按这里的上限截——账本每个子 Run 都整份重写,不能留成任意长。
+            val stored = checked.take(MAX_RESULT_CHARS)
+            store.save(ChildRecord(spec.id.value, parent.value, phase, stored, clock()))
             if (!ownerAlive(parent)) {
-                store.save(ChildRecord(spec.id.value, parent.value, ChildPhase.Unknown, checked, clock()))
+                store.save(ChildRecord(spec.id.value, parent.value, ChildPhase.Unknown, stored, clock()))
                 return ChildResult(spec.id, ChildPhase.Unknown, checked)
             }
             return ChildResult(spec.id, phase, checked)
@@ -77,6 +82,7 @@ class ChildAgentRunner(
     fun cancelAll(parent: RunId) { synchronized(active) { active[parent]?.toList() }.orEmpty().forEach(AgentLoop::cancel) }
 
     companion object {
+        /** 落盘的子任务结果留多少字。交给父 Run 的那份不截:父 Run 按自己的 maxResultChars 截(见 SpawnAgent)。 */
         const val MAX_RESULT_CHARS = 4000
         private const val INTERRUPTED = "interrupted"
     }
