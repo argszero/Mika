@@ -27,7 +27,11 @@ fun interface AdbServiceFinder {
 }
 
 class AdbPairingException(val reason: Reason, message: String, cause: Throwable? = null) : IOException(message, cause) {
-    enum class Reason { CONNECT_FAILED, TLS_FAILED, WRONG_CODE, PROTOCOL }
+    enum class Reason {
+        /** 目标不是本机自己的地址(见 [AdbHosts]):一个 socket 都没建就拒。 */
+        NOT_LOCAL,
+        CONNECT_FAILED, TLS_FAILED, WRONG_CODE, PROTOCOL,
+    }
 }
 
 /** 配对成功时设备回报的身份(通常是 type=1 的设备 GUID)。 */
@@ -40,7 +44,14 @@ class AdbPeerInfo(val type: Int, val data: String)
  * 每个包前有 6 字节头:版本(1)、类型(0=SPAKE2,1=PEER_INFO)、负载长度(大端 uint32)。
  */
 class AdbPairing(private val tls: AdbTls) {
+    /** 与设备配对。[host] 必须是本机自己的地址(见 [AdbHosts]),否则抛 NOT_LOCAL 且一个 socket 都不建。 */
     fun pair(host: String, port: Int, code: String, timeoutMs: Int = 15_000): AdbPeerInfo {
+        if (!AdbHosts.isOwnAddress(host)) {
+            throw AdbPairingException(
+                AdbPairingException.Reason.NOT_LOCAL,
+                "refusing to pair with $host: adb is only reachable on this device",
+            )
+        }
         val socket = try {
             tls.connect(host, port, timeoutMs)
         } catch (e: SSLException) {

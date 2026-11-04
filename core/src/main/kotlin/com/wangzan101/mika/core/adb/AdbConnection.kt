@@ -19,6 +19,8 @@ import kotlin.concurrent.thread
 
 class AdbConnectionException(val reason: Reason, message: String, cause: Throwable? = null) : IOException(message, cause) {
     enum class Reason {
+        /** 目标不是本机自己的地址(见 [AdbHosts]):一个 socket 都没建就拒。 */
+        NOT_LOCAL,
         CONNECT_FAILED,
         TLS_FAILED,
         /** 设备不认这把钥匙(没配对、被撤销或授权过期),要重新配对。 */
@@ -196,8 +198,17 @@ class AdbConnection private constructor(
         private val EOF = ByteArray(0)
         private val HOST_BANNER = "host::\u0000".toByteArray(Charsets.US_ASCII)
 
-        /** 连上 [host]:[port] 的 adbd(通常是 127.0.0.1 + mDNS 找到的无线调试端口)。 */
+        /**
+         * 连上 [host]:[port] 的 adbd(通常是 127.0.0.1 + mDNS 找到的无线调试端口)。
+         * [host] 必须是本机自己的地址(见 [AdbHosts]),否则抛 NOT_LOCAL 且一个 socket 都不建。
+         */
         fun open(host: String, port: Int, tls: AdbTls, timeoutMs: Int = 10_000): AdbConnection {
+            if (!AdbHosts.isOwnAddress(host)) {
+                throw AdbConnectionException(
+                    AdbConnectionException.Reason.NOT_LOCAL,
+                    "refusing to connect to $host: adb is only reachable on this device",
+                )
+            }
             val plain = Socket()
             try {
                 plain.tcpNoDelay = true

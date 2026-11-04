@@ -54,12 +54,15 @@ object BuiltinShellFailures {
         // 配对端口连不上:配对窗口已经关了(端口随窗口一起消失)
         AdbPairingException.Reason.CONNECT_FAILED -> BuiltinShellFailure.PairingWindowClosed
         AdbPairingException.Reason.TLS_FAILED, AdbPairingException.Reason.PROTOCOL -> BuiltinShellFailure.Unknown
+        // 地址不是本机自己的:调用处的错(见 AdbHosts),不是设备的状况
+        AdbPairingException.Reason.NOT_LOCAL -> BuiltinShellFailure.Unknown
     }
 
     fun ofConnection(reason: AdbConnectionException.Reason) = when (reason) {
         AdbConnectionException.Reason.UNAUTHORIZED -> BuiltinShellFailure.AuthorizationRevoked
         AdbConnectionException.Reason.CONNECT_FAILED,
         AdbConnectionException.Reason.TLS_FAILED,
+        AdbConnectionException.Reason.NOT_LOCAL,
         AdbConnectionException.Reason.PROTOCOL -> BuiltinShellFailure.ConnectFailed
     }
 
