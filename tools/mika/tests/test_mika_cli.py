@@ -84,8 +84,8 @@ class CliTest(unittest.TestCase):
         self.token_file = self.directory / "token"
         self.token_file.write_text(TOKEN)
 
-    def invoke(self, *args, server=None, script=SCRIPT, stdin=None, env=None):
-        command = [sys.executable, str(script), "--json"]
+    def invoke(self, *args, server=None, script=SCRIPT, stdin=None, env=None, json_option="--json"):
+        command = [sys.executable, str(script), json_option]
         if server:
             command += ["--url", "http://127.0.0.1:" + str(server.server_port), "--token-file", str(self.token_file)]
         command += list(args)
@@ -453,6 +453,16 @@ else:
             self.assertNotIn("mika:", result.stdout)
             result, _ = self.invoke("task", "run", "--goal", "quiet", server=server)
             self.assertEqual("", result.stderr)
+
+    def test_an_abbreviated_json_option_still_means_compact_json_on_stdout(self):
+        # argparse abbreviates a long option to any unambiguous prefix, so --jso and
+        # --j already select --json. The output format and the stream an error goes
+        # to have to follow what was parsed, not the exact spelling that was typed.
+        for option in ("--json", "--jso", "--j"):
+            result, body = self.invoke("devices", "--adb", str(self.directory / "no-such-adb"), json_option=option)
+            self.assertEqual(2, result.returncode, result.stderr)
+            self.assertEqual("adb_unavailable", body["error"]["code"])
+            self.assertEqual(1, len(result.stdout.strip().splitlines()), result.stdout)
 
     def test_adb_calls_never_wait_on_stdin_or_inherited_pipes(self):
         module = load_cli()

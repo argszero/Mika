@@ -464,6 +464,25 @@ def parser():
     return p
 
 
+def json_flag(argv):
+    """Whether these arguments select --json.
+
+    argparse abbreviates a long option to any unambiguous prefix, so `--jso` and
+    `--j` select --json exactly as `--json` does. Deciding the output format by
+    looking for the exact spelling instead would format a run differently from
+    the way it was parsed: the error would go to stderr in the indented
+    human format while the agent that asked for JSON waits on stdout. Anything
+    after `--` is positional, not an option.
+    """
+    for token in argv:
+        if token == "--":
+            break
+        name = token.split("=", 1)[0]
+        if len(name) > 2 and name.startswith("--") and "--json".startswith(name):
+            return True
+    return False
+
+
 def main(argv=None):
     # Pipes default to the locale code page on Windows; agents read stdout as UTF-8 and stdin is documented as UTF-8.
     for stream in (sys.stdin, sys.stdout, sys.stderr):
@@ -471,7 +490,7 @@ def main(argv=None):
             stream.reconfigure(encoding="utf-8")
     argv = list(sys.argv[1:] if argv is None else argv)
     secrets, code = [], 0
-    compact = "--json" in argv
+    compact = json_flag(argv)
     try:
         args = parser().parse_args(argv)
         for key, default in {"device": None, "url": None, "token_file": None, "adb": "adb", "request_timeout": 15}.items():
